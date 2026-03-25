@@ -4,7 +4,6 @@ Retrieves changed YAML files from GitHub and uploads them to SIEMRULES API
 """
 
 import os
-import random
 import sys
 import argparse
 from urllib.parse import urljoin
