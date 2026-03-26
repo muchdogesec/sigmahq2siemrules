@@ -51,19 +51,23 @@ jobs:
 
       - name: Generate upload matrix
         id: generate-matrix
+        env:
+          RUN_STAGING: ${{ github.event.inputs.run_staging }}
+          RUN_PRODUCTION: ${{ github.event.inputs.run_production }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           python -c "
           import json, os
           from pathlib import Path
           matrix = [
           ]
-          if ${{ github.event.inputs.run_staging }} == 'true' or ${{ github.event_name }} == 'schedule':
+          if os.getenv('RUN_STAGING') == 'true' or os.getenv('EVENT_NAME') == 'schedule':
               matrix.append({
                   'target': 'staging',
                   'environment': 'siemrules-staging',
                   'upload_commit_sha': 'false',
               })
-          if ${{ github.event.inputs.run_production }} == 'true' or ${{ github.event_name }} == 'schedule':
+          if os.getenv('RUN_PRODUCTION') == 'true' or os.getenv('EVENT_NAME') == 'schedule':
               matrix.append({
                   'target': 'production',
                   'environment': 'siemrules-production',
