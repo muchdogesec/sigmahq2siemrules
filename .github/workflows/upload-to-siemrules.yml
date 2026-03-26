@@ -72,7 +72,7 @@ jobs:
           if matrix:
               matrix[-1]['upload_commit_sha'] = 'true'
               
-          path = Path('${{ GITHUB_OUTPUT }}')
+          path = Path(os.getenv('GITHUB_OUTPUT'))
           path.write_text('matrix=' + json.dumps(matrix))
           "
 
