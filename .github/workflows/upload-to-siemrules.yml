@@ -3,6 +3,16 @@ name: Upload Changed Rules to SIEMRULES
 on:
   workflow_dispatch:
     inputs:
+      run_staging:
+        description: "Run staging upload"
+        required: true
+        type: boolean
+        default: true
+      run_production:
+        description: "Run production upload"
+        required: true
+        type: boolean
+        default: true
       start_commit:
         description: "Start commit SHA (defaults to last production commit or empty tree if not available)"
         required: false
@@ -20,6 +30,7 @@ jobs:
     outputs:
       start_commit: ${{ steps.range.outputs.start_commit }}
       end_commit: ${{ steps.range.outputs.end_commit }}
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
 
     steps:
       - name: Checkout repository
@@ -37,6 +48,37 @@ jobs:
           workflow_conclusion: success
           if_no_artifact_found: ignore
           allow_forks: false
+
+      - name: Generate upload matrix
+        id: generate-matrix
+        env:
+          RUN_STAGING: ${{ github.event.inputs.run_staging }}
+          RUN_PRODUCTION: ${{ github.event.inputs.run_production }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python -c "
+          import json, os
+          from pathlib import Path
+          matrix = [
+          ]
+          if os.getenv('RUN_STAGING') == 'true' or os.getenv('EVENT_NAME') == 'schedule':
+              matrix.append({
+                  'target': 'staging',
+                  'environment': 'siemrules-staging',
+                  'upload_commit_sha': 'false',
+              })
+          if os.getenv('RUN_PRODUCTION') == 'true' or os.getenv('EVENT_NAME') == 'schedule':
+              matrix.append({
+                  'target': 'production',
+                  'environment': 'siemrules-production',
+              })
+          
+          if matrix:
+              matrix[-1]['upload_commit_sha'] = 'true'
+              
+          path = Path(os.getenv('GITHUB_OUTPUT'))
+          path.write_text('matrix=' + json.dumps(matrix))
+          "
 
       - name: Resolve commit range
         id: range
@@ -70,57 +112,16 @@ jobs:
             echo "- End commit: \`${{ steps.range.outputs.end_commit }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  upload-staging:
-    name: Upload to staging
-    runs-on: ubuntu-latest
-    needs: resolve-range
-    environment: siemrules-staging
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Upload changed rules to staging
-        env:
-          SIEMRULES_BASE_URL: ${{ secrets.SIEMRULES_BASE_URL }}
-          SIEMRULES_API_KEY: ${{ secrets.SIEMRULES_API_KEY }}
-          DETECTION_PACK_ID: ${{ secrets.DETECTION_PACK_ID }}
-          MAX_WORKERS: "10"
-          STATUS_CHECK_INTERVAL: "5"
-          MAX_STATUS_CHECKS: "60"
-        run: |
-          python actions/uploader.py \
-            --start-commit "${{ needs.resolve-range.outputs.start_commit }}" \
-            --end-commit "${{ needs.resolve-range.outputs.end_commit }}"
-
-      - name: Upload staging artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: siemrules-staging-results-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/
-          retention-days: 7
-
-  upload-production:
-    name: Upload to production
+  upload:
+    name: Upload to ${{ matrix.target }}
     runs-on: ubuntu-latest
     needs:
       - resolve-range
-      - upload-staging
-    environment: siemrules-production
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.resolve-range.outputs.matrix) }}
+    environment: ${{ matrix.environment }}
 
     steps:
       - name: Checkout repository
@@ -139,11 +140,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Upload changed rules to production
+      - name: Upload changed rules to ${{ matrix.target }}
         env:
           SIEMRULES_BASE_URL: ${{ secrets.SIEMRULES_BASE_URL }}
           SIEMRULES_API_KEY: ${{ secrets.SIEMRULES_API_KEY }}
-          DETECTION_PACK_ID: ${{ secrets.DETECTION_PACK_ID }}
+          DETECTION_PACK_ID: ${{ vars.DETECTION_PACK_ID }}
           MAX_WORKERS: "10"
           STATUS_CHECK_INTERVAL: "5"
           MAX_STATUS_CHECKS: "60"
@@ -152,16 +153,16 @@ jobs:
             --start-commit "${{ needs.resolve-range.outputs.start_commit }}" \
             --end-commit "${{ needs.resolve-range.outputs.end_commit }}"
 
-      - name: Upload production artifacts
+      - name: Upload ${{ matrix.target }} artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: siemrules-production-results-${{ github.run_id }}-${{ github.run_attempt }}
+          name: siemrules-${{ matrix.target }}-results
           path: artifacts/
           retention-days: 7
 
       - name: Upload badges
-        if: always()
+        if: always() && matrix.target == 'production'
         uses: actions/upload-artifact@v4
         with:
           name: siemrules-badges
@@ -170,7 +171,7 @@ jobs:
           overwrite: true
 
       - name: Upload last production commit SHA
-        if: success()
+        if: success() && matrix.upload_commit_sha == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: last-production-commit-sha
