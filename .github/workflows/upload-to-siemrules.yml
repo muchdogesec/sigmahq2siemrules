@@ -144,7 +144,7 @@ jobs:
         env:
           SIEMRULES_BASE_URL: ${{ secrets.SIEMRULES_BASE_URL }}
           SIEMRULES_API_KEY: ${{ secrets.SIEMRULES_API_KEY }}
-          DETECTION_PACK_ID: ${{ secrets.DETECTION_PACK_ID }}
+          DETECTION_PACK_ID: ${{ vars.DETECTION_PACK_ID }}
           MAX_WORKERS: "10"
           STATUS_CHECK_INTERVAL: "5"
           MAX_STATUS_CHECKS: "60"
