@@ -97,7 +97,7 @@ jobs:
           fi
 
           if [ -z "$END_COMMIT" ]; then
-            END_COMMIT="$(git rev-parse HEAD)"
+            END_COMMIT="HEAD"
           fi
 
           echo "start_commit=$START_COMMIT" >> "$GITHUB_OUTPUT"
