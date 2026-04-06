@@ -184,7 +184,7 @@ jobs:
           overwrite: true
 
       - name: Upload last commit SHA
-        if: success() && matrix.upload_commit_sha == 'true'
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: last-${{ matrix.target }}-commit-sha
