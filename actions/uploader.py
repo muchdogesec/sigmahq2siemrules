@@ -115,6 +115,8 @@ def retrieve_files(
             if diff.a_path and (
                 diff.a_path.endswith(".yml") or diff.a_path.endswith(".yaml")
             ):
+                if Path(diff.a_path).name == "info.yml":
+                    continue  # Skip info.yml files
                 file_path = Path(repo_path) / diff.a_path
                 if file_path.exists():
                     changed_files.append(file_path)
