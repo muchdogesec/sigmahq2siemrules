@@ -168,7 +168,7 @@ def upload_file(file_path: Path, repo_path: str, commit_id: str = None) -> Dict:
             print(
                 f"  ⚠️ Rule with ID {data['id']} already exists ({indicator_id}). Attempting to modify existing rule."
             )
-            for key in ["id", "author", "date", "modified"]:
+            for key in ["id", "author", "date"]:
                 data.pop(key, None)  # Remove keys if they exist to avoid conflicts
         data_str = yaml.dump(data)  # Convert back to string for upload
         response = requests.post(url, headers=headers, data=data_str, timeout=30)
