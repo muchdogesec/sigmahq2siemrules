@@ -82,7 +82,7 @@ jobs:
           staging_commit_path = Path('artifacts_staging/last_commit.txt')
 
           summary_file = open(os.getenv('GITHUB_STEP_SUMMARY'), 'a')
-          summary_file.write(f"# SIEMRULES Upload Matrix\n\n")
+          summary_file.write(f'# SIEMRULES Upload Matrix\n\n')
 
 
           if os.getenv('RUN_STAGING') == 'true' or os.getenv('EVENT_NAME') == 'schedule':
@@ -117,11 +117,10 @@ jobs:
           path = Path(os.getenv('GITHUB_OUTPUT'))
           path.write_text('matrix=' + json.dumps(matrix))
 
-          make table for start and end commit
-          summary_file.write(f"| Target | Start Commit | End Commit |\n")
-          summary_file.write(f"| --- | --- | --- |\n")
+          summary_file.write(f'| Target | Start Commit | End Commit |\n')
+          summary_file.write(f'| --- | --- | --- |\n')
           for entry in matrix:
-              summary_file.write(f"| {entry['target']} | {entry['commit_sha']} | {entry['end_commit']} |\n")
+              summary_file.write(f'''| {entry['target']} | {entry['commit_sha']} | {entry['end_commit']} |\n''')
 
           summary_file.close()
           "

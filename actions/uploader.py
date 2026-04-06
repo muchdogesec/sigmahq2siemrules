@@ -112,11 +112,11 @@ def retrieve_files(
         changed_files = []
         for diff in diffs:
             # Check if file is added or modified (not deleted)
+            if diff.a_path.startswith('.github') or diff.a_path.startswith('tests/') or os.path.basename(diff.a_path) == 'info.yml':
+                continue  # Skip hidden files
             if diff.a_path and (
                 diff.a_path.endswith(".yml") or diff.a_path.endswith(".yaml")
             ):
-                if Path(diff.a_path).name == "info.yml":
-                    continue  # Skip info.yml files
                 file_path = Path(repo_path) / diff.a_path
                 if file_path.exists():
                     changed_files.append(file_path)
@@ -152,9 +152,15 @@ def upload_file(file_path: Path, repo_path: str, commit_id: str = None) -> Dict:
         data = yaml.safe_load(
             file_path.open("r")
         )  # Validate YAML format before uploading
-        data.setdefault("references", []).append(
-            source_url
-        )  # Add source URL to references
+        references = [
+            source_url # Ensure source URL is included as a reference for traceability
+        ]
+        for ref in data.get("references", []):
+            # only valid urls should be added as references, avoid duplicates
+            if isinstance(ref, str) and ref.startswith("http") and ref not in references:
+                references.append(ref)
+        data["references"] = references
+
         for k in ["date", "modified"]:
             if isinstance(data.get(k), str):
                 data[k] = data[k].replace(
@@ -626,7 +632,7 @@ def main():
 
         if not files_to_process:
             print("\nNo YAML files found. Nothing to upload.")
-            save_artifacts([], [], "artifacts", current_commit_sha=current_commit_sha)
+            save_artifacts([], [], "artifacts", commit_sha=current_commit_sha)
             return
 
         # Step 2: Upload files
