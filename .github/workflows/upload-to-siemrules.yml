@@ -38,12 +38,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download previous production commit artifact
+      - name: Download production commit artifact
         if: ${{ !github.event.inputs.start_commit }}
         uses: dawidd6/action-download-artifact@v6
         with:
           name: last-production-commit-sha
-          path: artifacts/
+          path: artifacts_production/
+          workflow: upload-to-siemrules.yml
+          workflow_conclusion: success
+          if_no_artifact_found: ignore
+          allow_forks: false
+
+
+      - name: Download staging commit artifact
+        if: ${{ !github.event.inputs.start_commit }}
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: last-staging-commit-sha
+          path: artifacts_staging/
           workflow: upload-to-siemrules.yml
           workflow_conclusion: success
           if_no_artifact_found: ignore
@@ -55,62 +67,63 @@ jobs:
           RUN_STAGING: ${{ github.event.inputs.run_staging }}
           RUN_PRODUCTION: ${{ github.event.inputs.run_production }}
           EVENT_NAME: ${{ github.event_name }}
+          END_COMMIT: ${{ github.event.inputs.end_commit }}
+          START_COMMIT: ${{ github.event.inputs.start_commit }}
         run: |
           python -c "
           import json, os
           from pathlib import Path
           matrix = [
           ]
+          EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+          START_COMMIT = os.getenv('START_COMMIT')
+          END_COMMIT = os.getenv('END_COMMIT') or 'HEAD'
+          prod_commit_path = Path('artifacts_production/last_commit.txt')
+          staging_commit_path = Path('artifacts_staging/last_commit.txt')
+
+          summary_file = open(os.getenv('GITHUB_STEP_SUMMARY'), 'a')
+          summary_file.write(f'# SIEMRULES Upload Matrix\n\n')
+
+
           if os.getenv('RUN_STAGING') == 'true' or os.getenv('EVENT_NAME') == 'schedule':
+              commit_sha = START_COMMIT
+              if not commit_sha and staging_commit_path.exists():
+                  commit_sha = staging_commit_path.read_text().strip()
+              elif not commit_sha:
+                  commit_sha = EMPTY_TREE_SHA
+
               matrix.append({
                   'target': 'staging',
                   'environment': 'siemrules-staging',
-                  'upload_commit_sha': 'false',
+                  'commit_sha': commit_sha,
+                  'end_commit': END_COMMIT,
               })
+
           if os.getenv('RUN_PRODUCTION') == 'true' or os.getenv('EVENT_NAME') == 'schedule':
+              commit_sha = START_COMMIT
+              if not commit_sha and prod_commit_path.exists():
+                  commit_sha = prod_commit_path.read_text().strip()
+              elif not commit_sha:
+                  commit_sha = EMPTY_TREE_SHA
+
               matrix.append({
                   'target': 'production',
                   'environment': 'siemrules-production',
+                  'commit_sha': commit_sha,
+                  'end_commit': END_COMMIT,
               })
-          
-          if matrix:
-              matrix[-1]['upload_commit_sha'] = 'true'
               
+
           path = Path(os.getenv('GITHUB_OUTPUT'))
           path.write_text('matrix=' + json.dumps(matrix))
+
+          summary_file.write(f'| Target | Start Commit | End Commit |\n')
+          summary_file.write(f'| --- | --- | --- |\n')
+          for entry in matrix:
+              summary_file.write(f'''| {entry['target']} | {entry['commit_sha']} | {entry['end_commit']} |\n''')
+
+          summary_file.close()
           "
-
-      - name: Resolve commit range
-        id: range
-        shell: bash
-        run: |
-          EMPTY_TREE_SHA="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-          START_COMMIT="${{ github.event.inputs.start_commit }}"
-          END_COMMIT="${{ github.event.inputs.end_commit }}"
-
-          if [ -z "$START_COMMIT" ] && [ -f artifacts/last_commit.txt ]; then
-            START_COMMIT="$(cat artifacts/last_commit.txt)"
-          fi
-
-          if [ -z "$START_COMMIT" ]; then
-            START_COMMIT="$EMPTY_TREE_SHA"
-          fi
-
-          if [ -z "$END_COMMIT" ]; then
-            END_COMMIT="HEAD"
-          fi
-
-          echo "start_commit=$START_COMMIT" >> "$GITHUB_OUTPUT"
-          echo "end_commit=$END_COMMIT" >> "$GITHUB_OUTPUT"
-
-      - name: Write summary
-        run: |
-          {
-            echo "# Upload Range"
-            echo
-            echo "- Start commit: \`${{ steps.range.outputs.start_commit }}\`"
-            echo "- End commit: \`${{ steps.range.outputs.end_commit }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
 
   upload:
     name: Upload to ${{ matrix.target }}
@@ -150,8 +163,8 @@ jobs:
           MAX_STATUS_CHECKS: "60"
         run: |
           python actions/uploader.py \
-            --start-commit "${{ needs.resolve-range.outputs.start_commit }}" \
-            --end-commit "${{ needs.resolve-range.outputs.end_commit }}"
+            --start-commit "${{ matrix.commit_sha }}" \
+            --end-commit "${{ matrix.end_commit }}"
 
       - name: Upload ${{ matrix.target }} artifacts
         if: always()
@@ -170,11 +183,11 @@ jobs:
           retention-days: 90
           overwrite: true
 
-      - name: Upload last production commit SHA
-        if: success() && matrix.upload_commit_sha == 'true'
+      - name: Upload last commit SHA
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: last-production-commit-sha
+          name: last-${{ matrix.target }}-commit-sha
           path: artifacts/last_commit.txt
           retention-days: 90
           overwrite: true
