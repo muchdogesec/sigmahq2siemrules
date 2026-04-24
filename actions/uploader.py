@@ -168,16 +168,17 @@ def upload_file(file_path: Path, repo_path: str, commit_id: str = None) -> Dict:
                 )  # Replace slashes in date to avoid issues
 
         indicator_id, exists = rule_exists(data["id"], data)
+        request_method = "POST"
         response = None
         if exists:  # modify existing rule
+            request_method = "PUT"
             url = f"{SIEMRULES_BASE_URL}/v1/base-rules/{indicator_id}/modify/yml/"
             print(
                 f"  ⚠️ Rule with ID {data['id']} already exists ({indicator_id}). Attempting to modify existing rule."
             )
-            for key in ["id", "author", "date"]:
-                data.pop(key, None)  # Remove keys if they exist to avoid conflicts
+            data.pop("id", None)  # Remove ID from payload for modification
         data_str = yaml.dump(data)  # Convert back to string for upload
-        response = requests.post(url, headers=headers, data=data_str, timeout=30)
+        response = requests.request(request_method, url, headers=headers, data=data_str, timeout=30)
 
         if not response.ok:
             raise Exception(
