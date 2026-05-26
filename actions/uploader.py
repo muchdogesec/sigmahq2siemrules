@@ -450,8 +450,8 @@ def add_rules_to_detection_packs(succeeded_jobs: List[Dict]) -> Tuple[bool, List
         repo_relative_path = extract_repo_relative_path(job)
         pack_definition = find_detection_pack_for_path(repo_relative_path)
         if pack_definition:
-            rules_by_pack_name[pack_definition.name].append(rule_id)
-            pack_definition_by_name[pack_definition.name] = pack_definition
+            rules_by_pack_name[pack_definition.real_name].append(rule_id)
+            pack_definition_by_name[pack_definition.real_name] = pack_definition
         else:
             skipped_jobs.append(f"{repo_relative_path} ({rule_id})")
             print(f"  ! No detection pack mapping for '{repo_relative_path}', skipping rule {rule_id}")

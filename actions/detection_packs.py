@@ -22,6 +22,10 @@ class DetectionPackDefinition:
     def matches(self, repo_relative_path: str) -> bool:
         normalized_path = PurePosixPath(repo_relative_path).as_posix()
         return fnmatch.fnmatch(normalized_path, self.directory_glob)
+    
+    @property
+    def real_name(self) -> str:
+        return '[SigmaHQ] ' + self.name
 
 
 PACK_DEFINITIONS: Tuple[DetectionPackDefinition, ...] = (
@@ -253,7 +257,7 @@ class DetectionPackManager:
 
     def _create_detection_pack(self, definition: DetectionPackDefinition) -> Dict:
         base_payload = {
-            "name": definition.name,
+            "name": definition.real_name,
             "description": definition.description,
             "tlp_level": "clear",
             "labels": ["osint", "sigmahq", *definition.tags],
@@ -267,7 +271,7 @@ class DetectionPackManager:
         )
         if not response.ok:
             raise RuntimeError(
-                f"Failed to create detection pack '{definition.name}': "
+                f"Failed to create detection pack '{definition.real_name}': "
                 f"{response.status_code} {response.text}"
             )
         pack = response.json()
@@ -276,7 +280,7 @@ class DetectionPackManager:
 
     def get_or_create_pack_id(self, definition: DetectionPackDefinition) -> str:
         self.refresh_existing_packs()
-        existing_pack_id = self._packs_by_name.get(_normalize_name(definition.name))
+        existing_pack_id = self._packs_by_name.get(_normalize_name(definition.real_name))
         if existing_pack_id:
             return existing_pack_id
 
