@@ -34,7 +34,7 @@ if not SIEMRULES_BASE_URL:
     print("ERROR: SIEMRULES_BASE_URL environment variable not set")
     sys.exit(1)
 SIEMRULES_API_KEY = os.environ.get("SIEMRULES_API_KEY")
-LEGACY_DETECTION_PACK_ID = os.environ.get(
+MAIN_DETECTION_PACK_ID = os.environ.get(
     "DETECTION_PACK_ID"
 )  # Optional fallback pack for unmatched paths
 PROCESS_DEPRECATED = os.environ.get("PROCESS_DEPRECATED", "false").lower() in [
@@ -469,15 +469,15 @@ def add_rules_to_detection_packs(succeeded_jobs: List[Dict]) -> Tuple[bool, List
             all_success = False
             print(f"✗ Failed pack update for '{pack_name}': {e}")
 
-    if not LEGACY_DETECTION_PACK_ID:
+    if not MAIN_DETECTION_PACK_ID:
         all_success = False
-        print("✗ DETECTION_PACK_ID is required: every rule must be added to the legacy detection pack")
+        print("✗ DETECTION_PACK_ID is required: every rule must be added to the main detection pack")
     elif legacy_rule_ids:
         print(
-            f"Adding {len(set(legacy_rule_ids))} rules to legacy detection pack {LEGACY_DETECTION_PACK_ID}"
+            f"Adding {len(set(legacy_rule_ids))} rules to main detection pack {MAIN_DETECTION_PACK_ID}"
         )
         all_success = (
-            add_rules_to_detection_pack(legacy_rule_ids, LEGACY_DETECTION_PACK_ID)
+            add_rules_to_detection_pack(legacy_rule_ids, MAIN_DETECTION_PACK_ID)
             and all_success
         )
 
@@ -710,7 +710,7 @@ def main():
     print(f"  API Base URL: {SIEMRULES_BASE_URL}")
     print(f"  Max Workers: {MAX_WORKERS}")
     print(
-        f"  Fallback Detection Pack: {LEGACY_DETECTION_PACK_ID or 'disabled (folder-based packs only)'}"
+        f"  Fallback Detection Pack: {MAIN_DETECTION_PACK_ID or 'disabled (folder-based packs only)'}"
     )
     print()
 
