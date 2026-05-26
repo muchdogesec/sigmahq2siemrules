@@ -31,8 +31,6 @@ This tool monitors changes to Sigma rule files (`.yml`/`.yaml`) in an external r
 |----------|---------|-------------|
 | `GITHUB_REPO_URL` | `https://github.com/SigmaHQ/sigma` | URL of the external repository to clone and process |
 | `DETECTION_PACK_ID` | _(unset)_ | Optional fallback pack ID for rules that do not match known SigmaHQ folder mappings |
-| `SIEMRULES_CSRF_TOKEN` | _(unset)_ | Optional CSRF token header used by some SIEMRULES deployments for detection-pack creation |
-| `DETECTION_PACK_UUID_NAMESPACE` | `fa329051-43a6-5d2e-a3c0-bf3590ce2f41` | UUID namespace used to generate deterministic detection pack IDs |
 | `PROCESS_DEPRECATED` | `false` | Whether to process rules in `deprecated` or `unsupported` directories. Set to `true`, `1`, `y`, or `yes` to enable |
 | `MAX_WORKERS` | `10` | Number of concurrent workers for uploads and status checks |
 | `STATUS_CHECK_INTERVAL` | `10` | Seconds to wait between job status checks |
