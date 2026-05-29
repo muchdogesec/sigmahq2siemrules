@@ -3,6 +3,7 @@ Uploader script for sigma2stix GitHub Action
 Retrieves changed YAML files from GitHub and uploads them to SIEMRULES API
 """
 
+from collections import defaultdict
 import os
 import sys
 import argparse
@@ -18,6 +19,7 @@ from typing import List, Dict, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from git import Repo
 import yaml
+from detection_packs import DetectionPackManager, find_detection_pack_for_path
 
 
 ### ENVIRONMENT VARIABLES
@@ -32,9 +34,9 @@ if not SIEMRULES_BASE_URL:
     print("ERROR: SIEMRULES_BASE_URL environment variable not set")
     sys.exit(1)
 SIEMRULES_API_KEY = os.environ.get("SIEMRULES_API_KEY")
-DETECTION_PACK_ID = os.environ.get(
+MAIN_DETECTION_PACK_ID = os.environ.get(
     "DETECTION_PACK_ID"
-)  # Detection pack to add rules to
+)  # Optional fallback pack for unmatched paths
 PROCESS_DEPRECATED = os.environ.get("PROCESS_DEPRECATED", "false").lower() in [
     "true",
     "1",
@@ -147,6 +149,7 @@ def upload_file(file_path: Path, repo_path: str, commit_id: str = None) -> Dict:
     headers = {"API-KEY": SIEMRULES_API_KEY, "Content-Type": "application/yaml"}
 
     source_url = rewrite_path(file_path, repo_path, commit_id)
+    repo_relative_path = str(Path(file_path).relative_to(repo_path))
 
     try:
         data = yaml.safe_load(
@@ -176,7 +179,8 @@ def upload_file(file_path: Path, repo_path: str, commit_id: str = None) -> Dict:
             print(
                 f"  ⚠️ Rule with ID {data['id']} already exists ({indicator_id}). Attempting to modify existing rule."
             )
-            data.pop("id", None)  # Remove ID from payload for modification
+            for k in ['id', 'author', 'date', 'related']:
+                data.pop(k, None)  # Remove ID and author from payload for modification
         data_str = yaml.dump(data)  # Convert back to string for upload
         response = requests.request(request_method, url, headers=headers, data=data_str, timeout=30)
 
@@ -187,6 +191,8 @@ def upload_file(file_path: Path, repo_path: str, commit_id: str = None) -> Dict:
 
         result = response.json()
         result["source_url"] = source_url
+        result["repo_relative_path"] = repo_relative_path
+        result["rule_action"] = "updated" if request_method == "PUT" else "created"
         print(f"  ✓ Uploaded: {file_path.name} (Job ID: {result.get('id')})")
         return result
 
@@ -196,6 +202,8 @@ def upload_file(file_path: Path, repo_path: str, commit_id: str = None) -> Dict:
         )  # Truncate error message for readability
         return {
             "source_url": source_url,
+            "repo_relative_path": repo_relative_path,
+            "rule_action": "updated" if request_method == "PUT" else "created",
             "error": f"{type(e)}: {str(e)[:200]}",
             "status": "upload_failed",
         }
@@ -360,59 +368,125 @@ def load_last_commit(input_file: str) -> str:
     return None
 
 
-def add_rules_to_detection_pack(
-    succeeded_jobs: List[Dict], detection_pack_id: str
-) -> bool:
+def extract_rule_id(job: Dict) -> str:
     """
-    Adds successfully uploaded rules to a detection pack
-
-    Args:
-        succeeded_jobs: List of successful job results
-        detection_pack_id: ID of the detection pack to add rules to
-
-    Returns:
-        True if successful, False otherwise
+    Extracts a SIEMRULES rule ID from a successful upload job payload.
     """
-    if not succeeded_jobs:
-        print("No successful jobs to add to detection pack")
+    job_payload = job.get("metadata", job)
+    if job_payload.get("file_id"):
+        return str(job_payload["file_id"])
+    if job_payload.get("extra") and job_payload["extra"].get("indicator_id"):
+        return job_payload["extra"]["indicator_id"].rpartition("--")[-1]
+    return ""
+
+
+def extract_repo_relative_path(job: Dict) -> str:
+    """
+    Retrieves the Sigma repository relative path from upload metadata.
+    """
+    if job.get("repo_relative_path"):
+        return str(job["repo_relative_path"])
+
+    source_url = str(job.get("source_url", ""))
+    if "/blob/" in source_url:
+        blob_suffix = source_url.split("/blob/", 1)[-1]
+        if "/" in blob_suffix:
+            return blob_suffix.split("/", 1)[-1]
+    return ""
+
+
+def add_rules_to_detection_pack(rule_ids: List[str], detection_pack_id: str) -> bool:
+    """
+    Adds explicit rule IDs to a single detection pack.
+    """
+    if not rule_ids:
+        print(f"No rules to add to detection pack {detection_pack_id}")
         return True
 
-    # Extract file_ids from successful jobs
-    rule_ids = []
-    for job in succeeded_jobs:
-        job = job.get("metadata", job)
-        if job.get("file_id"):
-            rule_ids.append(job["file_id"])
-        elif job.get("extra") and job["extra"].get("indicator_id"):
-            rule_ids.append(
-                job["extra"]["indicator_id"].rpartition("--")[-1]
-            )  # Extract rule ID from indicator ID
-
-    if not rule_ids:
-        print("No valid file_ids found in successful jobs")
-        return False
-
     print(f"Adding {len(rule_ids)} rules to detection pack {detection_pack_id}")
-
     url = f"{SIEMRULES_BASE_URL}/v1/detection-packs/{detection_pack_id}/add-rules/"
     headers = {"API-KEY": SIEMRULES_API_KEY, "Content-Type": "application/json"}
-    payload = {"rule_ids": rule_ids}
+    payload = {"rule_ids": sorted(set(rule_ids))}
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=30)
-
-        if response.ok:
-            print(f"✓ Successfully added {len(rule_ids)} rules to detection pack")
-            return True
-        else:
-            print(f"✗ Failed to add rules to detection pack")
-            print(f"  Status Code: {response.status_code}")
-            print(f"  Response: {response.text}")
-            return False
-
+        response.raise_for_status()
+        print(f"✓ Successfully added {len(payload['rule_ids'])} rules to detection pack")
+        return True
     except Exception as e:
-        print(f"✗ Exception while adding rules to detection pack: {e}")
+        print(f"✗ Failed to add rules to detection pack {detection_pack_id}: {e}")
         return False
+
+
+def add_rules_to_detection_packs(succeeded_jobs: List[Dict]) -> Tuple[bool, List[str]]:
+    """
+    Adds successful rules into SigmaHQ detection packs based on Sigma folder paths.
+    Missing detection packs are created automatically.
+    """
+    if not succeeded_jobs:
+        print("No successful jobs to add to detection packs")
+        return True, []
+
+    manager = DetectionPackManager(
+        base_url=SIEMRULES_BASE_URL,
+        api_key=SIEMRULES_API_KEY,
+        timeout=30,
+    )
+
+    rules_by_pack_name: Dict[str, List[str]] = defaultdict(list)
+    pack_definition_by_name = {}
+    legacy_rule_ids = []
+    skipped_jobs = []
+
+    for job in succeeded_jobs:
+        rule_id = extract_rule_id(job)
+        if not rule_id:
+            skipped_jobs.append(
+                f"{extract_repo_relative_path(job) or job.get('source_url', 'unknown')} (missing rule ID)"
+            )
+            continue
+        legacy_rule_ids.append(rule_id)
+
+        repo_relative_path = extract_repo_relative_path(job)
+        pack_definition = find_detection_pack_for_path(repo_relative_path)
+        if pack_definition:
+            rules_by_pack_name[pack_definition.real_name].append(rule_id)
+            pack_definition_by_name[pack_definition.real_name] = pack_definition
+        else:
+            skipped_jobs.append(f"{repo_relative_path} ({rule_id})")
+            print(f"  ! No detection pack mapping for '{repo_relative_path}', skipping rule {rule_id}")
+
+    all_success = True
+    for pack_name, rule_ids in rules_by_pack_name.items():
+        pack_definition = pack_definition_by_name[pack_name]
+        try:
+            detection_pack_id = manager.get_or_create_pack_id(pack_definition)
+            manager.add_rules_to_pack(detection_pack_id, sorted(set(rule_ids)))
+            print(
+                f"✓ Added {len(set(rule_ids))} rules to detection pack '{pack_name}' ({detection_pack_id})"
+            )
+        except Exception as e:
+            all_success = False
+            print(f"✗ Failed pack update for '{pack_name}': {e}")
+
+    if not MAIN_DETECTION_PACK_ID:
+        all_success = False
+        print("✗ DETECTION_PACK_ID is required: every rule must be added to the main detection pack")
+    elif legacy_rule_ids:
+        print(
+            f"Adding {len(set(legacy_rule_ids))} rules to main detection pack {MAIN_DETECTION_PACK_ID}"
+        )
+        all_success = (
+            add_rules_to_detection_pack(legacy_rule_ids, MAIN_DETECTION_PACK_ID)
+            and all_success
+        )
+
+    if skipped_jobs:
+        print(f"• Unmapped rules (not a failure): {len(skipped_jobs)}")
+        for skipped_job in skipped_jobs[:10]:
+            print(f"  - {skipped_job}")
+
+    return all_success, skipped_jobs
 
 
 def save_artifacts(
@@ -469,7 +543,10 @@ def save_artifacts(
 
 
 def write_github_summary(
-    succeeded: List[Dict], failed: List[Dict], detection_pack_success: bool = None
+    succeeded: List[Dict],
+    failed: List[Dict],
+    detection_pack_success: bool = None,
+    unmapped_rules: List[str] = None,
 ):
     # Write GitHub Action summary if available
     summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -479,11 +556,27 @@ def write_github_summary(
         )
         return
     with open(summary_file, "a") as f:
+        attempted_jobs = succeeded + failed
+        attempted_created_count = sum(
+            1 for job in attempted_jobs if job.get("rule_action") == "created"
+        )
+        attempted_updated_count = sum(
+            1 for job in attempted_jobs if job.get("rule_action") == "updated"
+        )
+        created_count = sum(1 for job in succeeded if job.get("rule_action") == "created")
+        updated_count = sum(1 for job in succeeded if job.get("rule_action") == "updated")
+
         f.write("# SIEMRULES Upload Summary\n\n")
+        f.write("## Planned Rule Actions\n\n")
+        f.write(f"- 🆕 **To Create**: {attempted_created_count}\n")
+        f.write(f"- ♻️ **To Update**: {attempted_updated_count}\n\n")
         f.write(f"## Results\n\n")
         f.write(f"- ✅ **Succeeded**: {len(succeeded)}\n")
         f.write(f"- ❌ **Failed**: {len(failed)}\n")
         f.write(f"- 📊 **Total**: {len(succeeded) + len(failed)}\n\n")
+        f.write("## Rule Changes\n\n")
+        f.write(f"- 🆕 **Created**: {created_count}\n")
+        f.write(f"- ♻️ **Updated**: {updated_count}\n\n")
 
         if succeeded:
             f.write("### ✅ Succeeded Jobs\n\n")
@@ -499,12 +592,13 @@ def write_github_summary(
 
         if failed:
             f.write("### ❌ Failed Jobs\n\n")
-            f.write("| File | Error |\n")
-            f.write("|------|-------|\n")
+            f.write("| File | Action | Error |\n")
+            f.write("|------|--------|-------|\n")
             for job in failed[:10]:  # Show first 10
                 file_name = job.get("source_url", "unknown").rpartition("/")[-1]
+                action = job.get("rule_action", "unknown")
                 error = job.get("error", "Unknown error")[:100]  # Truncate long errors
-                f.write(f"| `{file_name}` | {error} |\n")
+                f.write(f"| `{file_name}` | `{action}` | {error} |\n")
             if len(failed) > 10:
                 f.write(f"\n_... and {len(failed) - 10} more_\n")
             f.write("\n")
@@ -521,6 +615,18 @@ def write_github_summary(
                 )
             else:
                 f.write(f"❌ Failed to add rules to detection pack\n")
+
+        if unmapped_rules:
+            f.write("\n## Unmapped Rules\n\n")
+            f.write(
+                f"ℹ️ {len(unmapped_rules)} rules were not mapped to a folder-specific detection pack (not treated as failure).\n\n"
+            )
+            f.write("| Rule |\n")
+            f.write("|------|\n")
+            for item in unmapped_rules[:20]:
+                f.write(f"| `{item}` |\n")
+            if len(unmapped_rules) > 20:
+                f.write(f"\n_... and {len(unmapped_rules) - 20} more_\n")
 
     print(f"✓ Updated GitHub Action summary")
 
@@ -574,10 +680,6 @@ def main():
         print("ERROR: SIEMRULES_API_KEY environment variable not set")
         sys.exit(1)
 
-    if not DETECTION_PACK_ID:
-        print("ERROR: DETECTION_PACK_ID environment variable not set")
-        sys.exit(1)
-
     # Determine repository path
     temp_dir = None
     if not GITHUB_REPO_URL:
@@ -607,6 +709,9 @@ def main():
     print(f"  End Commit: {args.end_commit or 'HEAD'}")
     print(f"  API Base URL: {SIEMRULES_BASE_URL}")
     print(f"  Max Workers: {MAX_WORKERS}")
+    print(
+        f"  Fallback Detection Pack: {MAIN_DETECTION_PACK_ID or 'disabled (folder-based packs only)'}"
+    )
     print()
 
     try:
@@ -661,14 +766,15 @@ def main():
 
         succeeded, failed = check_all_statuses(upload_results)
 
-        # Step 4: Add rules to detection pack
+        # Step 4: Add rules to detection packs
         detection_pack_success = None
+        unmapped_rules = []
         if succeeded:
             print(f"\n{'=' * 60}")
-            print("Adding Rules to Detection Pack")
-            print("=' * 60}")
-            detection_pack_success = add_rules_to_detection_pack(
-                succeeded, DETECTION_PACK_ID
+            print("Adding Rules to Detection Packs")
+            print("=" * 60)
+            detection_pack_success, unmapped_rules = add_rules_to_detection_packs(
+                succeeded
             )
         else:
             print(f"\nSkipping detection pack addition (no successful uploads)")
@@ -677,7 +783,9 @@ def main():
         print(f"\n{'=' * 60}")
         print("Saving Artifacts")
         print("=" * 60)
-        write_github_summary(succeeded, failed, detection_pack_success)
+        write_github_summary(
+            succeeded, failed, detection_pack_success, unmapped_rules
+        )
         save_artifacts(
             succeeded, failed, "artifacts", detection_pack_success, current_commit_sha
         )
@@ -686,12 +794,31 @@ def main():
         save_last_commit(current_commit_sha, LAST_COMMIT_FILE)
 
         # Summary
+        attempted_jobs = succeeded + failed
+        attempted_created_count = sum(
+            1 for job in attempted_jobs if job.get("rule_action") == "created"
+        )
+        attempted_updated_count = sum(
+            1 for job in attempted_jobs if job.get("rule_action") == "updated"
+        )
+        created_count = sum(
+            1 for job in succeeded if job.get("rule_action") == "created"
+        )
+        updated_count = sum(
+            1 for job in succeeded if job.get("rule_action") == "updated"
+        )
         print(f"\n{'=' * 60}")
         print("Summary")
         print("=" * 60)
+        print(f"🧭 Planned - To Create: {attempted_created_count}")
+        print(f"🧭 Planned - To Update: {attempted_updated_count}")
         print(f"✅ Succeeded: {len(succeeded)}")
         print(f"❌ Failed: {len(failed)}")
         print(f"📊 Total: {len(succeeded) + len(failed)}")
+        print(f"🆕 Created: {created_count}")
+        print(f"♻️ Updated: {updated_count}")
+        if unmapped_rules:
+            print(f"ℹ️ Unmapped Rules: {len(unmapped_rules)} (not a failure)")
         if detection_pack_success is not None:
             if detection_pack_success:
                 print(

@@ -11,7 +11,7 @@ This tool monitors changes to Sigma rule files (`.yml`/`.yaml`) in an external r
 - **Incremental Processing**: Tracks the last processed commit to avoid re-uploading unchanged rules
 - **Concurrent Uploads**: Uses thread pools for efficient parallel file uploads
 - **Job Monitoring**: Automatically monitors upload job status until completion
-- **Detection Pack Integration**: Optionally adds uploaded rules to a specific detection pack
+- **Detection Pack Integration**: Automatically maps rules to SigmaHQ detection packs by folder, creating missing packs when needed
 - **GitHub Actions Integration**: Generates workflow summaries and artifacts
 - **Error Handling**: Comprehensive error tracking and reporting
 - **Deprecated Rule Filtering**: Option to skip rules in deprecated directories
@@ -24,13 +24,13 @@ This tool monitors changes to Sigma rule files (`.yml`/`.yaml`) in an external r
 |----------|-------------|---------|
 | `SIEMRULES_BASE_URL` | Base URL for the SIEMRULES API | `https://api.siemrules.com` |
 | `SIEMRULES_API_KEY` | API key for authenticating with SIEMRULES | `your-api-key-here` |
-| `DETECTION_PACK_ID` | UUID of the detection pack to add rules to | `550e8400-e29b-41d4-a716-446655440000` |
 
 ### Optional Variables (local run)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GITHUB_REPO_URL` | `https://github.com/SigmaHQ/sigma` | URL of the external repository to clone and process |
+| `DETECTION_PACK_ID` | _(unset)_ | Optional fallback pack ID for rules that do not match known SigmaHQ folder mappings |
 | `PROCESS_DEPRECATED` | `false` | Whether to process rules in `deprecated` or `unsupported` directories. Set to `true`, `1`, `y`, or `yes` to enable |
 | `MAX_WORKERS` | `10` | Number of concurrent workers for uploads and status checks |
 | `STATUS_CHECK_INTERVAL` | `10` | Seconds to wait between job status checks |
@@ -71,7 +71,7 @@ python actions/uploader.py --start-commit abc123
 3. **Filtering**: Optionally filters out rules in `deprecated` or `unsupported` directories
 4. **Rule Upload**: Uploads each rule to SIEMRULES API (or modifies existing rules)
 5. **Status Monitoring**: Polls job status until all jobs complete or timeout
-6. **Detection Pack**: Adds successfully uploaded rules to the specified detection pack
+6. **Detection Packs**: Finds/creates SigmaHQ detection packs and adds uploaded rules based on rule folder
 7. **Artifacts**: Saves results to JSON files and generates GitHub workflow summary
 8. **Commit Tracking**: Saves the current commit SHA for the next run
 
