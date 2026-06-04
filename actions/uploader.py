@@ -179,8 +179,9 @@ def upload_file(file_path: Path, repo_path: str, commit_id: str = None) -> Dict:
             print(
                 f"  ⚠️ Rule with ID {data['id']} already exists ({indicator_id}). Attempting to modify existing rule."
             )
-            for k in ['id', 'author', 'date', 'related']:
+            for k in ['id', 'related']:
                 data.pop(k, None)  # Remove ID and author from payload for modification
+            data["author"] = IDENTITY_ID
         data_str = yaml.dump(data)  # Convert back to string for upload
         response = requests.request(request_method, url, headers=headers, data=data_str, timeout=30)
 
