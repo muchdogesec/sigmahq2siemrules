@@ -29,7 +29,7 @@ GITHUB_REPO_URL = (
 )  # External repository URL to clone
 SIEMRULES_BASE_URL = os.environ.get(
     "SIEMRULES_BASE_URL"
-)  # Base URL for SIEMRULES API, e.g. "https://api.siemrules.com"
+).rstrip('/')  # Base URL for SIEMRULES API, e.g. "https://api.siemrules.com"
 if not SIEMRULES_BASE_URL:
     print("ERROR: SIEMRULES_BASE_URL environment variable not set")
     sys.exit(1)
@@ -63,6 +63,9 @@ def get_team_id() -> str:
     url = f"{SIEMRULES_BASE_URL}/v1/team/"
     headers = {"API-KEY": SIEMRULES_API_KEY}
     response = requests.get(url, headers=headers, timeout=10)
+    if not response.ok:
+        print(f"Failed to retrieve team id: [{response.status_code}] {response.text}")
+        response.raise_for_status()
     return "identity--" + response.json()["details"]["id"]
 
 
